@@ -18,7 +18,7 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --quiet --default-toolchain=1.73.0 --profile=minimal
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name Install protobuf
+      - name: Install protobuf
       - run: sudo apt-get -y install protobuf-compiler
       - name: Compile dependencies
         run: bundle exec rake compile
