@@ -137,6 +137,18 @@ impl MmapedFile {
         FileEntry::entries_to_string(sorted).map_err(|e| e.into())
     }
 
+    /// Read the list of files provided from Ruby and convert them to a Prometheus
+    /// metrics String.
+    pub fn to_protobuf(file_list: RArray) -> magnus::error::Result<String> {
+        let mut map = EntryMap::new();
+        map.aggregate_files(file_list)?;
+
+        let sorted = map.into_sorted()?;
+
+        FileEntry::entries_to_protobuf(sorted).map_err(|e| e.into())
+    }
+
+
     /// Document-method: []
     /// Document-method: slice
     ///

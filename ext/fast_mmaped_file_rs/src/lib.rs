@@ -15,6 +15,14 @@ pub mod mmap;
 pub mod raw_entry;
 pub mod util;
 
+pub mod io {
+    pub mod prometheus {
+        pub mod client {
+            include!(concat!(env!("OUT_DIR"), "/io.prometheus.client.rs"));
+        }
+    }
+}
+
 #[cfg(test)]
 mod testhelper;
 
@@ -60,6 +68,7 @@ fn init(ruby: &Ruby) -> magnus::error::Result<()> {
     klass.const_set("MAP_SHARED", Fixnum::from_i64(MAP_SHARED).unwrap())?;
 
     klass.define_singleton_method("to_metrics", function!(MmapedFile::to_metrics, 1))?;
+    klass.define_singleton_method("to_protobuf", function!(MmapedFile::to_protobuf, 1))?;
 
     // Required for subclassing to work
     klass.define_alloc_func::<MmapedFile>();

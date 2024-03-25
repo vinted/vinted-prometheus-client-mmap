@@ -7,7 +7,7 @@ require 'tmpdir'
 module Prometheus
   module Client
     class Configuration
-      attr_accessor :value_class, :multiprocess_files_dir, :initial_mmap_file_size, :logger, :pid_provider
+      attr_accessor :value_class, :multiprocess_files_dir, :initial_mmap_file_size, :logger, :pid_provider, :enable_protobuf
 
       def initialize
         @value_class = ::Prometheus::Client::MmapedValue
