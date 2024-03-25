@@ -9,13 +9,15 @@ jobs:
   build-release-pipeline:
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt-get -y install protobuf-compiler
       - uses: actions/checkout@v2
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: 3.2.3
           bundler-cache: true
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --quiet --default-toolchain=1.73.0 --profile=minimal
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Compile dependencies
         run: bundle exec rake compile
       - name: Test
