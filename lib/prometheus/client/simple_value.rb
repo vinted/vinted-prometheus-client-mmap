@@ -11,7 +11,7 @@ module Prometheus
         @value = value
       end
 
-      def increment(by = 1)
+      def increment(by = 1, exemplar_name = '', exemplar_value = '')
         @value += by
       end
 
