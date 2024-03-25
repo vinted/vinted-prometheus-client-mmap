@@ -1,0 +1,95 @@
+#!/usr/bin/env ruby
+$LOAD_PATH << File.expand_path('../../lib', __FILE__)
+require 'prometheus/client'
+require 'prometheus/client/helper/plain_file'
+require 'prometheus/client/helper/metrics_processing'
+require 'prometheus/client/helper/metrics_representation'
+require 'json'
+require 'optparse'
+
+require 'fast_mmaped_file_rs'
+
+options = {}
+OptionParser.new do |opts|
+  opts.banner = 'Usage: parse [options] files...'
+
+  opts.on('-t', '--to-prometheus-text', 'format output using Prometheus text formatter') do |v|
+    options[:prom_text] = v
+  end
+
+  opts.on('-s', '--to-prometheus-text-slow', 'format output using Prometheus Ruby based text formatter') do |v|
+    options[:prom_text_slow] = v
+  end
+
+  opts.on('-p', '--profile', 'enable profiling') do |v|
+    options[:profile] = v
+  end
+
+  opts.on_tail('-h', '--help', 'Show this message') do
+    puts opts
+    exit
+  end
+end.parse!
+
+class Object
+  def transform(&block)
+    yield self
+  end
+end
+
+# Output closely resembling binary file contents
+# best used with `jq`
+def to_json(files)
+  files.map { |f| Prometheus::Client::Helper::PlainFile.new(f) }
+    .map { |f| { filepath: f.filepath, entries: entries_to_json(f.parsed_entries(true)) } }
+    .transform { |s| JSON.dump(s); nil }
+end
+
+def to_prom_text(files)
+  files.map {|f| Prometheus::Client::Helper::PlainFile.new(f) }
+    .map { |f| [f.filepath, f.multiprocess_mode.to_sym, f.type.to_sym, f.pid] }
+    .transform { |files|
+      FastMmapedFileRs.to_metrics(files.to_a)
+    }
+end
+
+def to_prom_text_slow(files)
+  files.map { |f| Prometheus::Client::Helper::PlainFile.new(f) }
+    .each_with_object({}) { |f, metrics| f.to_metrics(metrics, true) }
+    .transform(&Prometheus::Client::Helper::MetricsProcessing.method(:merge_metrics))
+    .transform(&Prometheus::Client::Helper::MetricsRepresentation.method(:to_text))
+end
+
+def entries_to_json(entries)
+  entries.map { |e, v| entry_to_json(*JSON.load(e)).merge(value: v) }
+end
+
+def entry_to_json(metric=nil, name=nil, labels=[], label_values=[])
+  { metric: metric, name: name, labels: labels.zip(label_values).to_h }
+end
+
+def run(profile = false)
+  if profile
+    require 'ruby-prof'
+
+    RubyProf.start
+
+    yield
+
+    result = RubyProf.stop
+    printer = RubyProf::FlatPrinter.new(result)
+    printer.print(STDERR)
+  else
+    yield
+  end
+end
+
+run(options[:profile]) do
+  if options[:prom_text]
+    puts to_prom_text(ARGV)
+  elsif options[:prom_text_slow]
+    puts to_prom_text_slow(ARGV)
+  else
+    puts to_json(ARGV)
+  end
+end

@@ -1,0 +1,17 @@
+leak:compile_quantifier_node
+leak:compile_tree
+leak:heap_page_allocate
+leak:objspace_xmalloc0
+leak:objspace_xrealloc
+leak:onig_new
+leak:onig_compile
+leak:onig_compile_ruby
+leak:onig_bbuf_init
+leak:onig_region_resize
+leak:onig_st_insert_strend
+leak:parse_exp
+leak:ruby_init_setproctitle
+leak:rb_reg_initialize
+leak:rb_threadptr_root_fiber_setup
+leak:ruby_xcalloc
+leak:/lib/x86_64-linux-gnu/libruby-2.3

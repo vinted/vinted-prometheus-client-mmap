@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+set -vx
+
+bundle install
+bundle exec rake compile
+
+if cargo nextest --version > /dev/null 2>&1; then exit; fi
+
+# Check if rust is managed by 'asdf'
+if command -v cargo | grep '.asdf/shims'; then
+    # This will fail if no rust version has been specified in asdf
+    rust_path="$(asdf where rust)/bin"
+
+# Check for $CARGO_HOME that may not be in $HOME
+# We use '/dev/null' as a fallback value known to be present and not a directory
+elif [ -d "${CARGO_HOME:-/dev/null}/bin" ]; then
+    rust_path="${CARGO_HOME}/bin"
+
+# Default path for rustup.rs
+elif [ -d "${HOME}/.cargo/bin" ]; then
+    rust_path="${HOME}/.cargo/bin"
+else
+    echo "No rust toolchain found, skipping installation of 'cargo nextest'"
+    exit
+fi
+
+if [ "$(uname -s)" = 'Darwin' ]; then
+    host_os='mac'
+elif [ "$(uname -s)" = 'Linux' ] && [ "$(uname -m)" = 'x86_64' ]; then
+    host_os='linux'
+else
+    echo "Auto-install for 'cargo nextest' only available on MacOS and x86_64 Linux. Download manually from https://nexte.st/"
+    exit
+fi
+
+echo "Installing 'cargo nextest'..."
+curl -LsSf "https://get.nexte.st/latest/${host_os}" | tar zxf - -C "${rust_path}"
