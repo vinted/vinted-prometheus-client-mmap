@@ -1,9 +1,0 @@
-name: Build and release ruby gem
-
-on: [push]
-
-jobs:
-  build-release-pipeline:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
