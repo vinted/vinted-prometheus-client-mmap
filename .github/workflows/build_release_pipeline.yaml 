@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [ main ]
   push:
+    branches: [ feature/initial_github_action_setup ]
   workflow_dispatch:
 
 jobs:
