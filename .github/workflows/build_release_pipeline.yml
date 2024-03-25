@@ -23,3 +23,8 @@ jobs:
         run: bundle exec rake compile
       - name: Test
         run: bundle exec rake spec
+      - name: Build gem
+        if: success() && github.ref == 'refs/heads/master'
+        run: |
+          gem build prometheus-client-mmap.gemspec
+          echo "::set-output name=gem_version::v$(bundle exec rake version)"
