@@ -2,9 +2,8 @@ name: Build and release ruby gem
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
   push:
-    branches: [ feature/initial_github_action_setup ]
   workflow_dispatch:
 
 jobs:
