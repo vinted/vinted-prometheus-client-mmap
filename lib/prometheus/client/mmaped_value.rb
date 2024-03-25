@@ -120,12 +120,18 @@ module Prometheus
           unless @file.nil?
             @file.close
           end
+          unless @exemplar_file.nil?
+            @exemplar_file.close
+          end
           mmaped_file = Helper::MmapedFile.open_exclusive_file(@file_prefix)
+          exemplar_file = Helper::MmapedFile.open_exclusive_file('exemplar')
 
           @@files[@file_prefix] = MmapedDict.new(mmaped_file)
+          @@files['exemplar'] = MmapedDict.new(exemplar_file)
         end
 
         @file = @@files[@file_prefix]
+        @exemplar_file = @@files['exemplar']
         @key = rebuild_key
 
         @value = read_value(@key)
@@ -141,6 +147,8 @@ module Prometheus
 
       def write_value(key, val)
         @file.write_value(key, val)
+        puts "#{key} #{val}"
+        @exemplar_file.m.upsert_exemplar({}, key, val, "foo", "bar")
       rescue StandardError => e
         Prometheus::Client.logger.warn("writing value to #{@file.path} failed with #{e}")
         Prometheus::Client.logger.debug(e.backtrace.join("\n"))

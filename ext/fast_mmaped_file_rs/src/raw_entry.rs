@@ -1,6 +1,7 @@
 use std::mem::size_of;
 
 use crate::error::MmapError;
+use crate::exemplars::{Exemplar, EXEMPLAR_ENTRY_MAX_SIZE_BYTES};
 use crate::util;
 use crate::util::CheckedOps;
 use crate::Result;
@@ -13,6 +14,42 @@ pub struct RawEntry<'a> {
 }
 
 impl<'a> RawEntry<'a> {
+    pub fn save_exemplar(bytes: &'a mut [u8], key: &[u8], value: Exemplar) -> Result<usize> {
+        let total_len = Self::calc_total_len_exemplar(key.len())?;
+
+        if total_len > bytes.len() {
+            return Err(MmapError::Other(format!(
+                "entry length {total_len} larger than slice length {}",
+                bytes.len()
+            )));
+        }
+
+        let val = serde_json::to_string(&value).unwrap();
+
+        // CAST: `calc_len` runs `check_encoded_len`, we know the key len
+        // is less than i32::MAX. No risk of overflows or failed casts.
+        let key_len: u32 = key.len() as u32;
+
+        // Write the key length to the mmap.
+        bytes[..size_of::<u32>()].copy_from_slice(&key_len.to_ne_bytes());
+
+        // Advance slice past the size.
+        let bytes = &mut bytes[size_of::<u32>()..];
+
+        bytes[..key.len()].copy_from_slice(key);
+
+        // Advance to end of key.
+        let bytes = &mut bytes[key.len()..];
+
+        let pad_len = Self::padding_len(key.len());
+        bytes[..pad_len].fill(b' ');
+        let bytes = &mut bytes[pad_len..];
+
+        bytes[..val.len()].copy_from_slice(val.as_bytes());
+
+        Self::calc_value_offset(key.len())
+    }
+
     /// Save an entry to the mmap, returning the value offset in the newly created entry.
     pub fn save(bytes: &'a mut [u8], key: &[u8], value: f64) -> Result<usize> {
         let total_len = Self::calc_total_len(key.len())?;
@@ -102,6 +139,11 @@ impl<'a> RawEntry<'a> {
     #[inline]
     pub fn calc_total_len(encoded_len: usize) -> Result<usize> {
         Self::calc_value_offset(encoded_len)?.add_chk(size_of::<f64>())
+    }
+
+    #[inline]
+    pub fn calc_total_len_exemplar(encoded_len: usize) -> Result<usize> {
+        Self::calc_value_offset(encoded_len)?.add_chk(EXEMPLAR_ENTRY_MAX_SIZE_BYTES)
     }
 
     /// Calculate the value offset of an `MmapEntry`, including the string length,

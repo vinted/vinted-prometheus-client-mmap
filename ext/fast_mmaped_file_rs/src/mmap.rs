@@ -6,6 +6,7 @@ use magnus::value::Fixnum;
 use magnus::{eval, scan_args, Error, Integer, RArray, RClass, RHash, RString, Value};
 use nix::libc::{c_char, c_long, c_ulong};
 use rb_sys::rb_str_new_static;
+use core::panic;
 use std::fs::File;
 use std::io::{prelude::*, SeekFrom};
 use std::mem;
@@ -15,6 +16,7 @@ use std::sync::RwLock;
 
 use crate::err;
 use crate::error::MmapError;
+use crate::exemplars::Exemplar;
 use crate::file_entry::FileEntry;
 use crate::map::EntryMap;
 use crate::raw_entry::RawEntry;
@@ -75,6 +77,8 @@ const STR_SHARED: c_ulong = 1 << (14);
 #[derive(Debug, Default)]
 #[magnus::wrap(class = "FastMmapedFileRs", free_immediately, size)]
 pub struct MmapedFile(RwLock<Option<InnerMmap>>);
+
+use std::time::{SystemTime, UNIX_EPOCH};
 
 impl MmapedFile {
     /// call-seq:
@@ -320,6 +324,61 @@ impl MmapedFile {
         rs_self.load_value(value_offset)
     }
 
+    pub fn upsert_exemplar(
+        rb_self: Obj<Self>,
+        positions: RHash,
+        key: RString,
+        value: f64,
+        exemplar_name: RString,
+        exemplar_value: RString,
+    ) -> magnus::error::Result<f64> {
+        let rs_self = &*rb_self;
+        let position: Option<Fixnum> = positions.lookup(key)?;
+
+        let start = SystemTime::now();
+        let since_the_epoch = start
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards");
+        
+        let ex: Exemplar = Exemplar {
+            label_name: unsafe { exemplar_name.as_str().unwrap().into() },
+            label_value: unsafe { exemplar_value.as_str().unwrap().into() },
+            value: value,
+            timestamp: since_the_epoch.as_nanos(),
+        };
+
+        if let Some(pos) = position {
+            let pos = pos.to_usize()?;
+            return rs_self
+                .inner_mut(|inner| {
+                    inner.save_exemplar(pos, ex)?;
+
+                    // TODO just return `value` here instead of loading it?
+                    // This is how the C implementation did it, but I don't
+                    // see what the extra load gains us.
+                    let ex = inner.load_exemplar(pos);
+
+                    Ok(ex.unwrap().value)
+                })
+                .map_err(|e| e.into());
+        }
+
+
+        rs_self.check_expand_exemplar(rb_self, key.len())?;
+
+        let value_offset: usize = rs_self.inner_mut(|inner| {
+            // SAFETY: We must not call any Ruby code for the lifetime of this borrow.
+            unsafe { inner.initialize_entry_exemplar(key.as_slice(), ex) }
+        })?;
+
+        // CAST: no-op on 64-bit, widening on 32-bit.
+        positions.aset(key, Integer::from_u64(value_offset as u64))?;
+
+        let ex = rs_self.load_exemplar(value_offset);
+
+        Ok(ex.unwrap().value)
+    }
+
     /// Update the value of an existing entry, if present. Otherwise create a new entry
     /// for the key.
     pub fn upsert_entry(
@@ -469,6 +528,23 @@ impl MmapedFile {
         Ok(())
     }
 
+    /// Check that the mmap is large enough to contain the value to be added,
+    /// and expand it to fit if necessary.
+    fn check_expand_exemplar(&self, rb_self: Obj<Self>, key_len: usize) -> magnus::error::Result<()> {
+        // CAST: no-op on 32-bit, widening on 64-bit.
+        let used = self.inner(|inner| inner.load_used())? as usize;
+        let entry_len = RawEntry::calc_total_len_exemplar(key_len)?;
+
+        // We need the mmapped region to contain at least one byte beyond the
+        // written data to create a NUL- terminated C string. Validate that
+        // new length does not exactly match or exceed the length of the mmap.
+        while self.capacity() <= used.add_chk(entry_len)? {
+            self.expand_to_fit(rb_self, self.capacity().mul_chk(2)?)?;
+        }
+
+        Ok(())
+    }
+
     /// Expand the underlying file until it is long enough to fit `target_cap`.
     /// This will remove the existing mmap, expand the file, then update any
     /// strings held by the `WeakMap` to point to the newly mmapped address.
@@ -552,6 +628,11 @@ impl MmapedFile {
 
     fn load_value(&self, position: usize) -> magnus::error::Result<f64> {
         self.inner(|inner| inner.load_value(position))
+            .map_err(|e| e.into())
+    }
+
+    fn load_exemplar<'a, 'b>(&'a self, position: usize) -> magnus::error::Result<Exemplar> {
+        self.inner_mut(|inner| inner.load_exemplar(position))
             .map_err(|e| e.into())
     }
 

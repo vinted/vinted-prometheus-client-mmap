@@ -9,7 +9,9 @@ use std::path::PathBuf;
 
 use crate::error::{MmapError, RubyError};
 use crate::raw_entry::RawEntry;
-use crate::util::CheckedOps;
+use crate::exemplars::{Exemplar, EXEMPLAR_ENTRY_MAX_SIZE_BYTES};
+
+use crate::util::{read_exemplar, CheckedOps};
 use crate::util::{self, errno, read_f64, read_u32};
 use crate::Result;
 use crate::HEADER_SIZE;
@@ -139,6 +141,59 @@ impl InnerMmap {
         Ok(position)
     }
 
+    pub unsafe fn initialize_entry_exemplar(&mut self, key: &[u8], ex: Exemplar) -> Result<usize> {
+        // CAST: no-op on 32-bit, widening on 64-bit.
+        let current_used = self.load_used()? as usize;
+        let entry_length = RawEntry::calc_total_len_exemplar(key.len())?;
+
+        let new_used = current_used.add_chk(entry_length)?;
+
+        // Increasing capacity requires expanding the file and re-mmapping it, we can't
+        // perform this from `InnerMmap`.
+        if self.capacity() < new_used {
+            return Err(MmapError::Other(format!(
+                "mmap capacity {} less than {}",
+                self.capacity(),
+                new_used
+            )));
+        }
+
+        let bytes = self.map.as_mut();
+        let value_offset = RawEntry::save_exemplar(&mut bytes[current_used..new_used], key, ex)?;
+
+        // Won't overflow as value_offset is less than new_used.
+        let position = current_used + value_offset;
+        let new_used32 = util::cast_chk::<_, u32>(new_used, "used")?;
+
+        self.save_used(new_used32)?;
+        Ok(position)
+    }
+
+    pub fn save_exemplar(&mut self, offset: usize, exemplar: Exemplar) -> Result<()> {
+        if self.len.add_chk(size_of::<Exemplar>())? <= offset {
+            return Err(MmapError::out_of_bounds(
+                offset + size_of::<f64>(),
+                self.len,
+            ));
+        }
+
+        if offset < HEADER_SIZE {
+            return Err(MmapError::Other(format!(
+                "writing to offset {offset} would overwrite file header"
+            )));
+        }
+
+        let val = serde_json::to_string(&exemplar).unwrap();
+
+        let value_bytes = val.as_bytes();
+        let value_range = self.item_range(offset, value_bytes.len())?;
+
+        let bytes = self.map.as_mut();
+        bytes[value_range].copy_from_slice(&value_bytes);
+
+        Ok(())
+    }
+
     /// Save a metrics value to an existing entry in the mmap.
     pub fn save_value(&mut self, offset: usize, value: f64) -> Result<()> {
         if self.len.add_chk(size_of::<f64>())? <= offset {
@@ -172,6 +227,17 @@ impl InnerMmap {
             ));
         }
         read_f64(self.map.as_ref(), offset)
+    }
+
+    pub fn load_exemplar(&mut self, offset: usize) -> Result<Exemplar> {
+        if self.len.add_chk(EXEMPLAR_ENTRY_MAX_SIZE_BYTES)? <= offset {
+            return Err(MmapError::out_of_bounds(
+                offset + EXEMPLAR_ENTRY_MAX_SIZE_BYTES,
+                self.len,
+            ));
+        }
+
+        read_exemplar(self.map.as_mut(), offset)
     }
 
     /// The length of data written to the file.

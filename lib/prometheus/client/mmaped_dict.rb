@@ -46,6 +46,10 @@ module Prometheus
         @m.upsert_entry(@positions, key, value)
       end
 
+      def write_exemplar(key, value, exemplar_id, exemplar_val)
+        @m.upsert_exemplar({}, key, value, exemplar_id, exemplar_val)
+      end
+
       def path
         @m.filepath if @m
       end
