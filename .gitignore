@@ -1,3 +1,5 @@
+.DS_Store
+
 /.bundle/
 /.yardoc
 /_yardoc/
@@ -9,3 +11,6 @@
 
 # rspec failure tracking
 .rspec_status
+
+# Ignore IDE specific files
+.idea/
