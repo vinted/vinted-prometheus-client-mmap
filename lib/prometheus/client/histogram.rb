@@ -22,13 +22,13 @@ module Prometheus
           end
         end
 
-        def observe(value)
-          @sum.increment(value)
-          @total.increment()
-          @total_inf.increment()
+        def observe(value, exemplar_name = '', exemplar_value = '')
+          @sum.increment(value, exemplar_name, exemplar_value)
+          @total.increment(1, exemplar_name, exemplar_value)
+          @total_inf.increment(1, exemplar_name, exemplar_value)
 
           each_key do |bucket|
-            self[bucket].increment() if value <= bucket
+            self[bucket].increment(1, exemplar_name, exemplar_value) if value <= bucket
           end
         end
 

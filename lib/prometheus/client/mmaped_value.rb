@@ -26,11 +26,15 @@ module Prometheus
         initialize_file
       end
 
-      def increment(amount = 1)
+      def increment(amount = 1, exemplar_name = '', exemplar_value = '')
         @mutex.synchronize do
           initialize_file if pid_changed?
 
           @value += amount
+          # TODO(GiedriusS): write exemplars too.
+          if @file_prefix != 'gauge'
+            puts "#{@name} exemplar name = #{exemplar_name}, exemplar_value = #{exemplar_value}"
+          end
           write_value(@key, @value)
           @value
         end

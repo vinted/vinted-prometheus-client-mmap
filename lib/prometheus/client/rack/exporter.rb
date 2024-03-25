@@ -19,7 +19,7 @@ module Prometheus
           @registry = options[:registry] || Client.registry
           @path = options[:path] || '/metrics'
 
-          if Prometheus::Client.configuration.enable_protobuf && Prometheus::Client.configuration.rust_multiprocess_metrics
+          if Prometheus::Client.configuration.enable_protobuf
             @formats = [Formats::Text, Formats::Protobuf]
           else
             @formats = [Formats::Text]
