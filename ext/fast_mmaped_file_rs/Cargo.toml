@@ -29,6 +29,7 @@ tempfile = "3.9"
 
 [build-dependencies]
 rb-sys-env = "0.1"
+prost-build = "0.12"
 
 [lib]
 # Integration tests won't work if crate is only `cdylib`.
