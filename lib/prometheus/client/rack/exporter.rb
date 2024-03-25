@@ -2,6 +2,7 @@
 
 require 'prometheus/client'
 require 'prometheus/client/formats/text'
+require 'prometheus/client/formats/protobuf'
 
 module Prometheus
   module Client
@@ -11,20 +12,25 @@ module Prometheus
       class Exporter
         attr_reader :app, :registry, :path
 
-        FORMATS = [Formats::Text].freeze
         FALLBACK = Formats::Text
 
         def initialize(app, options = {})
           @app = app
           @registry = options[:registry] || Client.registry
           @path = options[:path] || '/metrics'
-          @acceptable = build_dictionary(FORMATS, FALLBACK)
+
+          if Prometheus::Client.configuration.enable_protobuf && Prometheus::Client.configuration.rust_multiprocess_metrics
+            @formats = [Formats::Text, Formats::Protobuf]
+          else
+            @formats = [Formats::Text]
+          end
+          @acceptable = build_dictionary(@formats, FALLBACK)
         end
 
         def call(env)
           if env['PATH_INFO'] == @path
             format = negotiate(env['HTTP_ACCEPT'], @acceptable)
-            format ? respond_with(format) : not_acceptable(FORMATS)
+            format ? respond_with(format) : not_acceptable(@formats)
           else
             @app.call(env)
           end

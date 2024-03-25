@@ -1,3 +1,4 @@
+use core::panic;
 use magnus::Symbol;
 use serde::Deserialize;
 use serde_json::value::RawValue;
@@ -10,6 +11,16 @@ use crate::file_info::FileInfo;
 use crate::raw_entry::RawEntry;
 use crate::Result;
 use crate::{SYM_GAUGE, SYM_LIVESUM, SYM_MAX, SYM_MIN};
+use std::io::Cursor;
+use varint_rs::VarintWriter;
+
+pub mod io {
+    pub mod prometheus {
+        pub mod client {
+            include!(concat!(env!("OUT_DIR"), "/io.prometheus.client.rs"));
+        }
+    }
+}
 
 /// A metrics entry extracted from a `*.db` file.
 #[derive(Clone, Debug)]
@@ -19,7 +30,7 @@ pub struct FileEntry {
 }
 
 /// String slices pointing to the fields of a borrowed `Entry`'s JSON data.
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct MetricText<'a> {
     pub family_name: &'a str,
     pub metric_name: &'a str,
@@ -131,7 +142,380 @@ impl EntryMetadata {
     }
 }
 
+use crate::io::prometheus::client::MetricType::{Counter, Gauge, Histogram, Summary};
+use itertools::Itertools;
+use prost::Message;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::hash::Hasher;
+
+use std::io::Write as OtherWrite;
 impl FileEntry {
+    pub fn trim_quotes(s: &str) -> String {
+        let mut chars = s.chars();
+
+        if s.starts_with('"') {
+            chars.next();
+        }
+        if s.ends_with('"') {
+            chars.next_back();
+        }
+
+        chars.as_str().to_string()
+    }
+
+    pub fn entries_to_protobuf(entries: Vec<FileEntry>) -> Result<String> {
+        let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let mut mtrcs: HashMap<u64, io::prometheus::client::Metric> = HashMap::new();
+        let mut metric_types = HashMap::new();
+        let mut metric_names = HashMap::new();
+
+        entries
+            .iter()
+            // TODO: Don't just unwrap. Handle the error gracefully.
+            .map(|v| {
+                (
+                    v,
+                    serde_json::from_str::<MetricText>(&v.data.json)
+                        .expect("cannot parse json entry"),
+                    v.meta.type_.name().expect("getting name").into_owned(),
+                )
+            })
+            .filter(|v| v.1.labels.len() == v.1.values.len())
+            .group_by(|v| v.1.family_name)
+            .into_iter()
+            .for_each(|(_, group)| {
+                // NOTE(GiedriusS): different dynamic labels fall under the same
+                // metric group.
+
+                'outer: for gr in group {
+                    let metric_type = gr.2;
+
+                    let lbls =
+                        gr.1.labels
+                            .iter()
+                            .map(|l| Self::trim_quotes(l))
+                            .zip(gr.1.values.iter().map(|v| Self::trim_quotes(v.get())));
+
+                    let mut m = io::prometheus::client::Metric {
+                        label: lbls
+                            .clone()
+                            .map(|l| io::prometheus::client::LabelPair {
+                                name: Some(l.0),
+                                value: Some(l.1.to_string()),
+                            })
+                            .collect::<Vec<io::prometheus::client::LabelPair>>(),
+                        gauge: None,
+                        counter: None,
+                        summary: None,
+                        untyped: None,
+                        histogram: None,
+                        timestamp_ms: None,
+                    };
+
+                    match metric_type.as_str() {
+                        "counter" => {
+                            let mut hasher = DefaultHasher::new();
+
+                            // Iterate over the tuples and hash their elements
+                            for (a, b) in lbls {
+                                a.hash(&mut hasher);
+                                b.hash(&mut hasher);
+                            }
+                            "counter".hash(&mut hasher);
+
+                            // Get the final u64 hash value
+                            let hash_value = hasher.finish();
+                            m.counter = Some(io::prometheus::client::Counter {
+                                value: Some(gr.0.meta.value),
+                                created_timestamp: None,
+                                exemplar: None,
+                            });
+
+                            mtrcs.insert(hash_value, m);
+                            metric_types.insert(hash_value, "counter");
+                            metric_names.insert(hash_value, gr.1.metric_name);
+                        }
+                        "gauge" => {
+                            let mut hasher = DefaultHasher::new();
+
+                            // Iterate over the tuples and hash their elements
+                            for (a, b) in lbls {
+                                a.hash(&mut hasher);
+                                b.hash(&mut hasher);
+                            }
+                            "gauge".hash(&mut hasher);
+
+                            let hash_value = hasher.finish();
+
+                            m.gauge = Some(io::prometheus::client::Gauge {
+                                value: Some(gr.0.meta.value),
+                            });
+                            mtrcs.insert(hash_value, m);
+                            metric_types.insert(hash_value, "gauge");
+                            metric_names.insert(hash_value, gr.1.metric_name);
+                        }
+                        "histogram" => {
+                            let mut hasher = DefaultHasher::new();
+
+                            let mut le: Option<f64> = None;
+
+                            // Iterate over the tuples and hash their elements
+                            for (a, b) in lbls {
+                                if a != "le" {
+                                    a.hash(&mut hasher);
+                                    b.hash(&mut hasher);
+                                }
+
+                                // Safe to ignore +Inf bound.
+                                if a == "le" {
+                                    if b == "+Inf" {
+                                        continue 'outer;
+                                    }
+                                    let leparsed = b.parse::<f64>();
+                                    match leparsed {
+                                        Ok(p) => le = Some(p),
+                                        Err(e) => panic!("failed to parse {} due to {}", b, e),
+                                    }
+                                }
+                            }
+                            "histogram".hash(&mut hasher);
+
+                            let hash_value = hasher.finish();
+
+                            match mtrcs.get_mut(&hash_value) {
+                                Some(v) => {
+                                    let hs =
+                                        v.histogram.as_mut().expect("getting mutable histogram");
+
+                                    for bucket in &mut hs.bucket {
+                                        if bucket.upper_bound != le {
+                                            continue;
+                                        }
+
+                                        let mut curf: f64 =
+                                            bucket.cumulative_count_float.unwrap_or_default();
+                                        curf += gr.0.meta.value;
+
+                                        bucket.cumulative_count_float = Some(curf);
+                                    }
+                                }
+                                None => {
+                                    let mut final_metric_name = gr.1.metric_name;
+
+                                    if let Some(stripped) =
+                                        final_metric_name.strip_suffix("_bucket")
+                                    {
+                                        final_metric_name = stripped;
+                                    }
+                                    if let Some(stripped) = final_metric_name.strip_suffix("_sum") {
+                                        final_metric_name = stripped;
+                                    }
+                                    if let Some(stripped) = final_metric_name.strip_suffix("_count")
+                                    {
+                                        final_metric_name = stripped;
+                                    }
+
+                                    let buckets = vec![io::prometheus::client::Bucket {
+                                        cumulative_count: None,
+                                        cumulative_count_float: Some(gr.0.meta.value),
+                                        upper_bound: Some(
+                                            le.expect(
+                                                &format!("got no LE for {}", gr.1.metric_name)
+                                                    .to_string(),
+                                            ),
+                                        ),
+                                        exemplar: None,
+                                    }];
+                                    m.label = m
+                                        .label
+                                        .into_iter()
+                                        .filter(|l| l.name != Some("le".to_string()))
+                                        .collect_vec();
+                                    // Create a new metric.
+                                    m.histogram = Some(io::prometheus::client::Histogram {
+                                        // All native histogram fields.
+                                        sample_count: None,
+                                        sample_count_float: None,
+                                        sample_sum: None,
+                                        created_timestamp: None,
+                                        schema: None,
+                                        zero_count: None,
+                                        zero_count_float: None,
+                                        zero_threshold: None,
+                                        negative_count: vec![],
+                                        negative_delta: vec![],
+                                        negative_span: vec![],
+                                        positive_count: vec![],
+                                        positive_delta: vec![],
+                                        positive_span: vec![],
+                                        // All classic histogram fields.
+                                        bucket: buckets,
+                                    });
+                                    mtrcs.insert(hash_value, m);
+                                    metric_types.insert(hash_value, "histogram");
+                                    metric_names.insert(hash_value, final_metric_name);
+                                }
+                            }
+                        }
+                        "summary" => {
+                            let mut hasher = DefaultHasher::new();
+
+                            let mut quantile: Option<f64> = None;
+
+                            // Iterate over the tuples and hash their elements
+                            for (a, b) in lbls {
+                                if a != "quantile" {
+                                    a.hash(&mut hasher);
+                                    b.hash(&mut hasher);
+                                }
+                                if a == "quantile" {
+                                    let quantileparsed = b.parse::<f64>();
+                                    match quantileparsed {
+                                        Ok(p) => quantile = Some(p),
+                                        Err(e) => {
+                                            panic!("failed to parse quantile {} due to {}", b, e)
+                                        }
+                                    }
+                                }
+                            }
+                            "summary".hash(&mut hasher);
+                            let hash_value = hasher.finish();
+
+                            match mtrcs.get_mut(&hash_value) {
+                                Some(v) => {
+                                    // Go through and edit buckets.
+                                    let smry = v.summary.as_mut().expect(
+                                        &format!(
+                                            "getting mutable summary for {}",
+                                            gr.1.metric_name
+                                        )
+                                        .to_string(),
+                                    );
+
+                                    if gr.1.metric_name.ends_with("_count") {
+                                        let samplecount = smry.sample_count.unwrap_or_default();
+                                        smry.sample_count =
+                                            Some((gr.0.meta.value as u64) + samplecount);
+                                    } else if gr.1.metric_name.ends_with("_sum") {
+                                        let samplesum: f64 = smry.sample_sum.unwrap_or_default();
+                                        smry.sample_sum = Some(gr.0.meta.value + samplesum);
+                                    } else {
+                                        let mut found_quantile = false;
+                                        for qntl in &mut smry.quantile {
+                                            if qntl.quantile != quantile {
+                                                continue;
+                                            }
+
+                                            let mut curq: f64 = qntl.quantile.unwrap_or_default();
+                                            curq += gr.0.meta.value;
+
+                                            qntl.quantile = Some(curq);
+                                            found_quantile = true;
+                                        }
+
+                                        if !found_quantile {
+                                            smry.quantile.push(io::prometheus::client::Quantile {
+                                                quantile: quantile,
+                                                value: Some(gr.0.meta.value),
+                                            });
+                                        }
+                                    }
+                                }
+                                None => {
+                                    m.label = m
+                                        .label
+                                        .into_iter()
+                                        .filter(|l| l.name != Some("quantile".to_string()))
+                                        .collect_vec();
+
+                                    let mut final_metric_name = gr.1.metric_name;
+                                    // If quantile then add to quantiles.
+                                    // if ends with _count then add it to count.
+                                    // If ends with _sum then add it to sum.
+                                    if gr.1.metric_name.ends_with("_count") {
+                                        final_metric_name =
+                                            gr.1.metric_name.strip_suffix("_count").unwrap();
+                                        m.summary = Some(io::prometheus::client::Summary {
+                                            quantile: vec![],
+                                            sample_count: Some(gr.0.meta.value as u64),
+                                            sample_sum: None,
+                                            created_timestamp: None,
+                                        });
+                                    } else if gr.1.metric_name.ends_with("_sum") {
+                                        final_metric_name =
+                                            gr.1.metric_name.strip_suffix("_sum").unwrap();
+                                        m.summary = Some(io::prometheus::client::Summary {
+                                            quantile: vec![],
+                                            sample_sum: Some(gr.0.meta.value),
+                                            sample_count: None,
+                                            created_timestamp: None,
+                                        });
+                                    } else {
+                                        let quantiles = vec![io::prometheus::client::Quantile {
+                                            quantile: quantile,
+                                            value: Some(gr.0.meta.value),
+                                        }];
+                                        m.summary = Some(io::prometheus::client::Summary {
+                                            quantile: quantiles,
+                                            sample_count: None,
+                                            sample_sum: None,
+                                            created_timestamp: None,
+                                        });
+                                    }
+
+                                    mtrcs.insert(hash_value, m);
+                                    metric_types.insert(hash_value, "summary");
+                                    metric_names.insert(hash_value, final_metric_name);
+                                }
+                            }
+                        }
+                        mtype => {
+                            panic!("unhandled metric type {}", mtype)
+                        }
+                    }
+                }
+            });
+
+        mtrcs.iter().for_each(|mtrc| {
+            let metric_name = metric_names.get(mtrc.0).expect("getting metric name");
+            let metric_type = metric_types.get(mtrc.0).expect("getting metric type");
+
+            let protobuf_mf = io::prometheus::client::MetricFamily {
+                name: Some(metric_name.to_string()),
+                help: Some("Multiprocess metric".to_string()),
+                r#type: match metric_type.to_string().as_str() {
+                    "counter" => Some(Counter.into()),
+                    "gauge" => Some(Gauge.into()),
+                    "histogram" => Some(Histogram.into()),
+                    "summary" => Some(Summary.into()),
+                    mtype => panic!("unhandled metric type {}", mtype),
+                },
+                metric: vec![mtrc.1.clone()],
+            };
+
+            let encoded_mf = protobuf_mf.encode_to_vec();
+
+            buffer
+                .write_u32_varint(
+                    encoded_mf
+                        .len()
+                        .try_into()
+                        .expect("failed to encode metricfamily"),
+                )
+                .unwrap();
+            buffer
+                .write_all(&encoded_mf)
+                .expect("failed to write output");
+        });
+
+        // NOTE: Rust strings are bytes encoded in UTF-8. Ruby doesn't have such
+        // invariant. So, let's convert those bytes to a string since everything ends
+        // up as a string in Ruby.
+        unsafe { Ok(str::from_utf8_unchecked(buffer.get_ref()).to_string()) }
+    }
+
     /// Convert the sorted entries into a String in Prometheus metrics format.
     pub fn entries_to_string(entries: Vec<FileEntry>) -> Result<String> {
         // We guesstimate that lines are ~100 bytes long, preallocate the string to
@@ -255,6 +639,12 @@ mod test {
     use crate::file_info::FileInfo;
     use crate::raw_entry::RawEntry;
     use crate::testhelper::{TestEntry, TestFile};
+
+    #[test]
+    fn test_trim_quotes() {
+        assert_eq!("foo", FileEntry::trim_quotes("foo"));
+        assert_eq!("foo", FileEntry::trim_quotes("\"foo\""));
+    }
 
     #[test]
     fn test_entries_to_string() {
