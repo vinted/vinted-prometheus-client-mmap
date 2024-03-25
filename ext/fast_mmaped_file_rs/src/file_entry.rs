@@ -149,6 +149,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::io::Write as OtherWrite;
 impl FileEntry {
@@ -227,10 +228,25 @@ impl FileEntry {
 
                             // Get the final u64 hash value
                             let hash_value = hasher.finish();
+
+                            let start = SystemTime::now();
+                            let since_the_epoch = start
+                                .duration_since(UNIX_EPOCH)
+                                .expect("Time went backwards");
+
                             m.counter = Some(io::prometheus::client::Counter {
                                 value: Some(gr.0.meta.value),
                                 created_timestamp: None,
-                                exemplar: None,
+                                exemplar: Some(io::prometheus::client::Exemplar{
+                                    label: vec![
+                                        io::prometheus::client::LabelPair {
+                                            name: Some("traceID".to_string()),
+                                            value: Some("123456789".to_string()),
+                                        }
+                                    ],
+                                    value: Some(gr.0.meta.value),
+                                    timestamp: Some(prost_types::Timestamp { seconds:since_the_epoch.as_secs() as i64 , nanos: since_the_epoch.as_nanos() as i32 }),
+                                }),
                             });
 
                             mtrcs.insert(hash_value, m);
