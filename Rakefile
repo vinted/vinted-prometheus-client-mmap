@@ -45,6 +45,10 @@ task :console do
   exec 'irb -r prometheus -I ./lib'
 end
 
+task :version do |_t|
+  puts Prometheus::Client::VERSION
+end
+
 gemspec = Gem::Specification.load(File.expand_path('../prometheus-client-mmap.gemspec', __FILE__))
 
 Gem::PackageTask.new(gemspec)

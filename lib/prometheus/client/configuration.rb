@@ -17,6 +17,7 @@ module Prometheus
         @multiprocess_files_dir = ENV.fetch('prometheus_multiproc_dir') do
           Dir.mktmpdir("prometheus-mmap")
         end
+        @enable_protobuf = false
       end
     end
   end

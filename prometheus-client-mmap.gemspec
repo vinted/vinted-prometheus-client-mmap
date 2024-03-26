@@ -3,14 +3,16 @@ $LOAD_PATH.push File.expand_path('../lib', __FILE__)
 require 'prometheus/client/version'
 
 Gem::Specification.new do |s|
-  s.name              = 'prometheus-client-mmap'
+  s.name              = 'vinted-prometheus-client-mmap'
   s.version           = Prometheus::Client::VERSION
   s.summary           = 'A suite of instrumentation metric primitives ' \
                         'that can be exposed through a web services interface.'
   s.authors           = ['Tobias Schmidt', 'Paweł Chojnacki', 'Stan Hu', 'Will Chandler']
-  s.email             = ['ts@soundcloud.com', 'pawel@gitlab.com', 'stanhu@gmail.com', 'wchandler@gitlab.com']
+  s.email             = ['backend@vinted.com']
   s.homepage          = 'https://gitlab.com/gitlab-org/prometheus-client-mmap'
   s.license           = 'Apache-2.0'
+
+  s.metadata["allowed_push_host"] = "https://rubygems.org"
 
   s.files             = `git ls-files README.md .tool-versions lib ext vendor`.split("\n")
   s.require_paths     = ['lib']
