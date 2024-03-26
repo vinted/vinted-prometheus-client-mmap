@@ -3,7 +3,7 @@ $LOAD_PATH.push File.expand_path('../lib', __FILE__)
 require 'prometheus/client/version'
 
 Gem::Specification.new do |s|
-  s.name              = 'prometheus-client-mmap'
+  s.name              = 'vinted-prometheus-client-mmap'
   s.version           = Prometheus::Client::VERSION
   s.summary           = 'A suite of instrumentation metric primitives ' \
                         'that can be exposed through a web services interface.'
