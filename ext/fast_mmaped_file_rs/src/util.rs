@@ -1,6 +1,5 @@
 use nix::errno::Errno;
 use nix::libc::c_long;
-use std::borrow::Cow;
 use std::fmt::Display;
 use std::io;
 use std::mem::size_of;

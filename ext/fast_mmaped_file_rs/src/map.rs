@@ -1,7 +1,6 @@
 use hashbrown::hash_map::RawEntryMut;
 use hashbrown::HashMap;
-use magnus::class::file;
-use magnus::{eval, exception::*, Error, RArray, Value};
+use magnus::{exception::*, Error, RArray};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem::size_of;
 

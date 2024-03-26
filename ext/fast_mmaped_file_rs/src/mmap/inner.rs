@@ -15,6 +15,7 @@ use crate::util::{read_exemplar, CheckedOps};
 use crate::util::{self, errno, read_f64, read_u32};
 use crate::Result;
 use crate::HEADER_SIZE;
+use std::iter;
 
 /// A mmapped file and its metadata. Ruby never directly interfaces
 /// with this struct.
@@ -186,7 +187,11 @@ impl InnerMmap {
         let val = serde_json::to_string(&exemplar).unwrap();
 
         let value_bytes = val.as_bytes();
-        let value_range = self.item_range(offset, value_bytes.len())?;
+
+        let mut value_bytes = value_bytes.to_vec();
+        value_bytes.extend(iter::repeat(0).take(EXEMPLAR_ENTRY_MAX_SIZE_BYTES - value_bytes.len()));
+
+        let value_range = self.item_range(offset, EXEMPLAR_ENTRY_MAX_SIZE_BYTES)?;
 
         let bytes = self.map.as_mut();
         bytes[value_range].copy_from_slice(&value_bytes);
