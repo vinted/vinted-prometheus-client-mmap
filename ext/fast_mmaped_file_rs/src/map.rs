@@ -1,6 +1,7 @@
 use hashbrown::hash_map::RawEntryMut;
 use hashbrown::HashMap;
-use magnus::{exception::*, Error, RArray};
+use magnus::class::file;
+use magnus::{eval, exception::*, Error, RArray, Value};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem::size_of;
 
@@ -142,22 +143,39 @@ impl EntryMap {
         let mut pos = HEADER_SIZE;
 
         while pos + size_of::<u32>() < used {
-            let raw_entry = RawEntry::from_slice(&source[pos..used])?;
+            let raw_entry: RawEntry;
 
-            if pos + raw_entry.total_len() > used {
-                return Err(MmapError::PromParsing(format!(
-                    "source file {} corrupted, used {used} < stored data length {}",
-                    file_info.path.display(),
-                    pos + raw_entry.total_len()
-                )));
+            if file_info.type_.to_string() == "exemplar" {
+                raw_entry = RawEntry::from_slice_exemplar(&source[pos..used])?;
+
+                if pos + raw_entry.total_len_exemplar() > used {
+                    return Err(MmapError::PromParsing(format!(
+                        "source file {} corrupted, used {used} < stored data length {}",
+                        file_info.path.display(),
+                        pos + raw_entry.total_len()
+                    )));
+                }
+
+                pos += raw_entry.total_len_exemplar();
+
+            } else {
+                raw_entry = RawEntry::from_slice(&source[pos..used])?;
+
+                if pos + raw_entry.total_len() > used {
+                    return Err(MmapError::PromParsing(format!(
+                        "source file {} corrupted, used {used} < stored data length {}",
+                        file_info.path.display(),
+                        pos + raw_entry.total_len()
+                    )));
+                }
+
+                pos += raw_entry.total_len();
             }
-
+            
             let meta = EntryMetadata::new(&raw_entry, &file_info)?;
             let data = BorrowedData::new(&raw_entry, &file_info, meta.is_pid_significant())?;
 
             self.merge_or_store(data, meta)?;
-
-            pos += raw_entry.total_len();
         }
 
         Ok(())
@@ -198,7 +216,8 @@ mod test {
                 meta: EntryMetadata {
                     multiprocess_mode: Symbol::new("max"),
                     type_: Symbol::new("gauge"),
-                    value: 1.0,
+                    value: Some(1.0),
+                    ex: None,
                 },
             },
             FileEntry {
@@ -209,7 +228,8 @@ mod test {
                 meta: EntryMetadata {
                     multiprocess_mode: Symbol::new("max"),
                     type_: Symbol::new("gauge"),
-                    value: 1.0,
+                    value: Some(1.0),
+                    ex: None,
                 },
             },
             FileEntry {
@@ -220,7 +240,8 @@ mod test {
                 meta: EntryMetadata {
                     multiprocess_mode: Symbol::new("max"),
                     type_: Symbol::new("gauge"),
-                    value: 1.0,
+                    value: Some(1.0),
+                    ex: None,
                 },
             },
             FileEntry {
@@ -231,7 +252,8 @@ mod test {
                 meta: EntryMetadata {
                     multiprocess_mode: Symbol::new("max"),
                     type_: Symbol::new("gauge"),
-                    value: 1.0,
+                    value: Some(1.0),
+                    ex: None,
                 },
             },
             FileEntry {
@@ -242,7 +264,8 @@ mod test {
                 meta: EntryMetadata {
                     multiprocess_mode: Symbol::new("all"),
                     type_: Symbol::new("gauge"),
-                    value: 1.0,
+                    value: Some(1.0),
+                    ex: None,
                 },
             },
             FileEntry {
@@ -253,7 +276,8 @@ mod test {
                 meta: EntryMetadata {
                     multiprocess_mode: Symbol::new("all"),
                     type_: Symbol::new("gauge"),
-                    value: 1.0,
+                    value: Some(1.0),
+                    ex: None,
                 },
             },
         ];
@@ -294,7 +318,8 @@ mod test {
             meta: EntryMetadata {
                 multiprocess_mode: Symbol::new("all"),
                 type_: Symbol::new("gauge"),
-                value: 1.0,
+                value: Some(1.0),
+                ex: None,
             },
         };
 
@@ -306,7 +331,8 @@ mod test {
             meta: EntryMetadata {
                 multiprocess_mode: Symbol::new("all"),
                 type_: Symbol::new("gauge"),
-                value: 5.0,
+                value: Some(5.0),
+                ex: None,
             },
         };
 
@@ -318,7 +344,8 @@ mod test {
             meta: EntryMetadata {
                 multiprocess_mode: Symbol::new("all"),
                 type_: Symbol::new("gauge"),
-                value: 100.0,
+                value: Some(100.0),
+                ex: None,
             },
         };
 
@@ -330,7 +357,8 @@ mod test {
             meta: EntryMetadata {
                 multiprocess_mode: Symbol::new("all"),
                 type_: Symbol::new("gauge"),
-                value: 1.0,
+                value: Some(100.0),
+                ex: None,
             },
         };
 
@@ -345,7 +373,7 @@ mod test {
 
         assert_eq!(
             5.0,
-            map.0.get(&starting_entry.data).unwrap().value,
+            map.0.get(&starting_entry.data).unwrap().value.unwrap(),
             "value updated"
         );
         assert_eq!(1, map.0.len(), "no entry added");
@@ -359,7 +387,7 @@ mod test {
 
         assert_eq!(
             5.0,
-            map.0.get(&starting_entry.data).unwrap().value,
+            map.0.get(&starting_entry.data).unwrap().value.unwrap(),
             "value unchanged"
         );
 
@@ -371,7 +399,7 @@ mod test {
 
         assert_eq!(
             5.0,
-            map.0.get(&starting_entry.data).unwrap().value,
+            map.0.get(&starting_entry.data).unwrap().value.unwrap(),
             "value unchanged"
         );
         assert_eq!(3, map.0.len(), "entry added");

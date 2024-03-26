@@ -103,6 +103,23 @@ impl<'a> RawEntry<'a> {
         Ok(Self { bytes, encoded_len })
     }
 
+    pub fn from_slice_exemplar(bytes: &'a [u8]) -> Result<Self> {
+        // CAST: no-op on 32-bit, widening on 64-bit.
+        let encoded_len = util::read_u32(bytes, 0)? as usize;
+
+        let total_len = Self::calc_total_len_exemplar(encoded_len)?;
+
+        // Confirm the value is in bounds of the slice provided.
+        if total_len > bytes.len() {
+            return Err(MmapError::out_of_bounds(total_len, bytes.len()));
+        }
+
+        // Advance slice past length int and cut at end of entry.
+        let bytes = &bytes[size_of::<u32>()..total_len];
+
+        Ok(Self { bytes, encoded_len })
+    }
+
     /// Read the `f64` value of an entry from memory.
     #[inline]
     pub fn value(&self) -> f64 {
@@ -112,6 +129,15 @@ impl<'a> RawEntry<'a> {
         // UNWRAP: We confirm in the constructor that the value offset
         // is in-range for the slice.
         util::read_f64(self.bytes, offset).unwrap()
+    }
+
+    pub fn exemplar(&self) -> Exemplar {
+        // We've stripped off the leading u32, don't include that here.
+        let offset = self.encoded_len + Self::padding_len(self.encoded_len);
+
+        // UNWRAP: We confirm in the constructor that the value offset
+        // is in-range for the slice.
+        util::read_exemplar(self.bytes, offset).unwrap()
     }
 
     /// The length of the entry key without padding.
@@ -132,6 +158,12 @@ impl<'a> RawEntry<'a> {
     pub fn total_len(&self) -> usize {
         // UNWRAP:: We confirmed in the constructor that this doesn't overflow.
         Self::calc_total_len(self.encoded_len).unwrap()
+    }
+
+    #[inline]
+    pub fn total_len_exemplar(&self) -> usize {
+        // UNWRAP:: We confirmed in the constructor that this doesn't overflow.
+        Self::calc_total_len_exemplar(self.encoded_len).unwrap()
     }
 
     /// Calculate the total length of an `MmapEntry`, including the string length,

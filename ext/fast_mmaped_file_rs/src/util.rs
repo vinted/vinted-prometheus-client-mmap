@@ -98,9 +98,9 @@ pub fn read_exemplar(buf: &[u8], offset: usize) -> Result<Exemplar> {
 
        let res: Vec<u8> = out.iter().cloned().filter(|&x| x != 0).collect();
 
-        let v: Exemplar = serde_json::from_slice(&res).expect("failed to convert string to Exemplar");
+       let v: Exemplar = serde_json::from_slice(&res).expect("failed to convert string to Exemplar");
         
-        return Ok(v)
+       return Ok(v)
     }
     Err(MmapError::out_of_bounds(
         offset + EXEMPLAR_ENTRY_MAX_SIZE_BYTES,

@@ -31,11 +31,7 @@ module Prometheus
           initialize_file if pid_changed?
 
           @value += amount
-          # TODO(GiedriusS): write exemplars too.
-          if @file_prefix != 'gauge'
-            puts "#{@name} exemplar name = #{exemplar_name}, exemplar_value = #{exemplar_value}"
-          end
-          write_value(@key, @value)
+          write_value(@key, @value, exemplar_name, exemplar_value)
           @value
         end
       end
@@ -145,10 +141,12 @@ module Prometheus
         [@metric_name, @name, keys, values].to_json
       end
 
-      def write_value(key, val)
+      def write_value(key, val, exemplar_name = '', exemplar_value = '')
         @file.write_value(key, val)
-        puts "#{key} #{val}"
-        @exemplar_file.m.upsert_exemplar({}, key, val, "foo", "bar")
+        # Exemplars are only defined on counters or histograms.
+        if @file_prefix == 'counter' or @file_prefix == 'histogram' and exemplar_name != '' and exemplar_value != ''
+          @exemplar_file.write_exemplar(key, val, exemplar_name, exemplar_value)
+        end
       rescue StandardError => e
         Prometheus::Client.logger.warn("writing value to #{@file.path} failed with #{e}")
         Prometheus::Client.logger.debug(e.backtrace.join("\n"))

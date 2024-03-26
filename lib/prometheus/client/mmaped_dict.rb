@@ -47,7 +47,7 @@ module Prometheus
       end
 
       def write_exemplar(key, value, exemplar_id, exemplar_val)
-        @m.upsert_exemplar({}, key, value, exemplar_id, exemplar_val)
+        @m.upsert_exemplar(@positions, key, value, exemplar_id, exemplar_val)
       end
 
       def path

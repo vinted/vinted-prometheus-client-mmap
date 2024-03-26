@@ -6,7 +6,6 @@ use magnus::value::Fixnum;
 use magnus::{eval, scan_args, Error, Integer, RArray, RClass, RHash, RString, Value};
 use nix::libc::{c_char, c_long, c_ulong};
 use rb_sys::rb_str_new_static;
-use core::panic;
 use std::fs::File;
 use std::io::{prelude::*, SeekFrom};
 use std::mem;
@@ -736,13 +735,14 @@ impl MmapedFile {
 
 #[cfg(test)]
 mod test {
+    use super::*;
+    use core::panic;
     use magnus::error::Error;
     use magnus::eval;
     use magnus::Range;
     use nix::unistd::{sysconf, SysconfVar};
     use std::mem::size_of;
 
-    use super::*;
     use crate::raw_entry::RawEntry;
     use crate::testhelper::TestFile;
 
