@@ -1,10 +1,12 @@
 use nix::errno::Errno;
 use nix::libc::c_long;
+use std::borrow::Cow;
 use std::fmt::Display;
 use std::io;
 use std::mem::size_of;
 
 use crate::error::MmapError;
+use crate::exemplars::{Exemplar, EXEMPLAR_ENTRY_MAX_SIZE_BYTES};
 use crate::Result;
 
 /// Wrapper around `checked_add()` that converts failures
@@ -84,6 +86,24 @@ pub fn read_f64(buf: &[u8], offset: usize) -> Result<f64> {
     }
     Err(MmapError::out_of_bounds(
         offset + size_of::<f64>(),
+        buf.len(),
+    ))
+}
+
+pub fn read_exemplar(buf: &[u8], offset: usize) -> Result<Exemplar> {
+    if let Some(slice) = buf.get(offset..offset + EXEMPLAR_ENTRY_MAX_SIZE_BYTES) {
+        // UNWRAP: We can safely unwrap the conversion from slice to array as we
+       // can be sure the target array has same length as the source slice.
+       let out: &[u8; EXEMPLAR_ENTRY_MAX_SIZE_BYTES] = slice.try_into().expect("failed to convert slice to array");
+
+       let res: Vec<u8> = out.iter().cloned().filter(|&x| x != 0).collect();
+
+       let v: Exemplar = serde_json::from_slice(&res).expect("failed to convert string to Exemplar");
+        
+       return Ok(v)
+    }
+    Err(MmapError::out_of_bounds(
+        offset + EXEMPLAR_ENTRY_MAX_SIZE_BYTES,
         buf.len(),
     ))
 }

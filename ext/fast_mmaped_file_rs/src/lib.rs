@@ -14,6 +14,7 @@ pub mod map;
 pub mod mmap;
 pub mod raw_entry;
 pub mod util;
+pub mod exemplars;
 
 pub mod io {
     pub mod prometheus {
@@ -82,6 +83,7 @@ fn init(ruby: &Ruby) -> magnus::error::Result<()> {
     klass.define_method("used=", method!(MmapedFile::save_used, 1))?;
     klass.define_method("fetch_entry", method!(MmapedFile::fetch_entry, 3))?;
     klass.define_method("upsert_entry", method!(MmapedFile::upsert_entry, 3))?;
+    klass.define_method("upsert_exemplar", method!(MmapedFile::upsert_exemplar, 5))?;
 
     Ok(())
 }

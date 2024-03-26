@@ -1,6 +1,7 @@
 use std::mem::size_of;
 
 use crate::error::MmapError;
+use crate::exemplars::{Exemplar, EXEMPLAR_ENTRY_MAX_SIZE_BYTES};
 use crate::util;
 use crate::util::CheckedOps;
 use crate::Result;
@@ -13,6 +14,42 @@ pub struct RawEntry<'a> {
 }
 
 impl<'a> RawEntry<'a> {
+    pub fn save_exemplar(bytes: &'a mut [u8], key: &[u8], value: Exemplar) -> Result<usize> {
+        let total_len = Self::calc_total_len_exemplar(key.len())?;
+
+        if total_len > bytes.len() {
+            return Err(MmapError::Other(format!(
+                "entry length {total_len} larger than slice length {}",
+                bytes.len()
+            )));
+        }
+
+        let val = serde_json::to_string(&value).unwrap();
+
+        // CAST: `calc_len` runs `check_encoded_len`, we know the key len
+        // is less than i32::MAX. No risk of overflows or failed casts.
+        let key_len: u32 = key.len() as u32;
+
+        // Write the key length to the mmap.
+        bytes[..size_of::<u32>()].copy_from_slice(&key_len.to_ne_bytes());
+
+        // Advance slice past the size.
+        let bytes = &mut bytes[size_of::<u32>()..];
+
+        bytes[..key.len()].copy_from_slice(key);
+
+        // Advance to end of key.
+        let bytes = &mut bytes[key.len()..];
+
+        let pad_len = Self::padding_len(key.len());
+        bytes[..pad_len].fill(b' ');
+        let bytes = &mut bytes[pad_len..];
+
+        bytes[..val.len()].copy_from_slice(val.as_bytes());
+
+        Self::calc_value_offset(key.len())
+    }
+
     /// Save an entry to the mmap, returning the value offset in the newly created entry.
     pub fn save(bytes: &'a mut [u8], key: &[u8], value: f64) -> Result<usize> {
         let total_len = Self::calc_total_len(key.len())?;
@@ -66,6 +103,23 @@ impl<'a> RawEntry<'a> {
         Ok(Self { bytes, encoded_len })
     }
 
+    pub fn from_slice_exemplar(bytes: &'a [u8]) -> Result<Self> {
+        // CAST: no-op on 32-bit, widening on 64-bit.
+        let encoded_len = util::read_u32(bytes, 0)? as usize;
+
+        let total_len = Self::calc_total_len_exemplar(encoded_len)?;
+
+        // Confirm the value is in bounds of the slice provided.
+        if total_len > bytes.len() {
+            return Err(MmapError::out_of_bounds(total_len, bytes.len()));
+        }
+
+        // Advance slice past length int and cut at end of entry.
+        let bytes = &bytes[size_of::<u32>()..total_len];
+
+        Ok(Self { bytes, encoded_len })
+    }
+
     /// Read the `f64` value of an entry from memory.
     #[inline]
     pub fn value(&self) -> f64 {
@@ -75,6 +129,15 @@ impl<'a> RawEntry<'a> {
         // UNWRAP: We confirm in the constructor that the value offset
         // is in-range for the slice.
         util::read_f64(self.bytes, offset).unwrap()
+    }
+
+    pub fn exemplar(&self) -> Exemplar {
+        // We've stripped off the leading u32, don't include that here.
+        let offset = self.encoded_len + Self::padding_len(self.encoded_len);
+
+        // UNWRAP: We confirm in the constructor that the value offset
+        // is in-range for the slice.
+        util::read_exemplar(self.bytes, offset).unwrap()
     }
 
     /// The length of the entry key without padding.
@@ -97,11 +160,22 @@ impl<'a> RawEntry<'a> {
         Self::calc_total_len(self.encoded_len).unwrap()
     }
 
+    #[inline]
+    pub fn total_len_exemplar(&self) -> usize {
+        // UNWRAP:: We confirmed in the constructor that this doesn't overflow.
+        Self::calc_total_len_exemplar(self.encoded_len).unwrap()
+    }
+
     /// Calculate the total length of an `MmapEntry`, including the string length,
     /// string, padding, and value. Validates encoding_len is within expected bounds.
     #[inline]
     pub fn calc_total_len(encoded_len: usize) -> Result<usize> {
         Self::calc_value_offset(encoded_len)?.add_chk(size_of::<f64>())
+    }
+
+    #[inline]
+    pub fn calc_total_len_exemplar(encoded_len: usize) -> Result<usize> {
+        Self::calc_value_offset(encoded_len)?.add_chk(EXEMPLAR_ENTRY_MAX_SIZE_BYTES)
     }
 
     /// Calculate the value offset of an `MmapEntry`, including the string length,

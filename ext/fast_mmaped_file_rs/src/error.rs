@@ -135,7 +135,7 @@ impl MmapError {
         }
     }
 
-    pub fn out_of_bounds<T: Display>(index: T, len: T) -> Self {
+    pub fn out_of_bounds<T: Display>(index: T, len: T) -> Self {      
         MmapError::OutOfBounds {
             index: index.to_string(),
             len: len.to_string(),

@@ -14,3 +14,5 @@
 
 # Ignore IDE specific files
 .idea/
+lib/fast_mmaped_file_rs.so
+/target

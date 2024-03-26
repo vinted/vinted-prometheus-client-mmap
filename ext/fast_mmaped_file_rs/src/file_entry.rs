@@ -1,5 +1,5 @@
 use core::panic;
-use magnus::Symbol;
+use magnus::{eval, Symbol, Value};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use smallvec::SmallVec;
@@ -7,6 +7,7 @@ use std::fmt::Write;
 use std::str;
 
 use crate::error::{MmapError, RubyError};
+use crate::exemplars::Exemplar;
 use crate::file_info::FileInfo;
 use crate::raw_entry::RawEntry;
 use crate::Result;
@@ -104,34 +105,72 @@ impl<'a> BorrowedData<'a> {
 pub struct EntryMetadata {
     pub multiprocess_mode: Symbol,
     pub type_: Symbol,
-    pub value: f64,
+    pub value: Option<f64>,
+    pub ex: Option<Exemplar>,
 }
 
 impl EntryMetadata {
     /// Construct a new `FileEntry`, copying the JSON string from the `RawEntry`
     /// into an internal buffer.
     pub fn new(mmap_entry: &RawEntry, file: &FileInfo) -> Result<Self> {
+        if file.type_.to_string() == "exemplar" {
+            let ex = mmap_entry.exemplar();
+
+            
+
+            return Ok(EntryMetadata {
+                multiprocess_mode: file.multiprocess_mode,
+                type_: file.type_,
+                value: None,
+                ex: Some(ex),
+            })
+        }
+
         let value = mmap_entry.value();
 
         Ok(EntryMetadata {
             multiprocess_mode: file.multiprocess_mode,
             type_: file.type_,
-            value,
+            value: Some(value),
+            ex: None,
         })
     }
 
     /// Combine values with another `EntryMetadata`.
     pub fn merge(&mut self, other: &Self) {
-        if self.type_ == SYM_GAUGE {
-            match self.multiprocess_mode {
-                s if s == SYM_MIN => self.value = self.value.min(other.value),
-                s if s == SYM_MAX => self.value = self.value.max(other.value),
-                s if s == SYM_LIVESUM => self.value += other.value,
-                _ => self.value = other.value,
+        if other.ex.is_some() {
+            let otherex = other.ex.clone().unwrap();
+            
+            if self.ex.is_some() {
+                let selfex = self.ex.clone().unwrap();
+
+                if selfex.timestamp < otherex.timestamp {
+                    self.ex = other.ex.clone();
+                }
+            } else {
+                self.ex = other.ex.clone();
             }
-        } else {
-            self.value += other.value;
         }
+        if other.value.is_some() {
+            if self.value.is_none() {
+                self.value = other.value;
+            } else {
+                let other_value = other.value.unwrap();
+                let self_value = self.value.unwrap();
+
+                if self.type_ == SYM_GAUGE {
+                    match self.multiprocess_mode {
+                        s if s == SYM_MIN => self.value = Some(self_value.min(other_value)),
+                        s if s == SYM_MAX => self.value = Some(self_value.max(other_value)),
+                        s if s == SYM_LIVESUM => self.value = Some(self_value + other_value),
+                        _ => self.value = Some(other_value),
+                    }
+                } else {
+                    self.value = Some(self_value + other_value);
+                }
+            }
+        }
+        
     }
 
     /// Validate if pid is significant for metric.
@@ -149,9 +188,26 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::hash::Hasher;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::io::Write as OtherWrite;
+
+fn exemplar_to_proto(e: &Exemplar) -> io::prometheus::client::Exemplar {
+    let seconds = e.timestamp / (1000 * 1000 * 1000);
+    let nanos = e.timestamp % (1000 * 1000 * 1000);
+
+    io::prometheus::client::Exemplar {
+        label: vec![io::prometheus::client::LabelPair {
+            name: Some(e.label_name.clone()),
+            value: Some(e.label_value.clone()),
+        }],
+        value: Some(e.value),
+        timestamp: Some(prost_types::Timestamp {
+            seconds: seconds as i64,
+            nanos: nanos as i32,
+        }),
+    }
+}
+
 impl FileEntry {
     pub fn trim_quotes(s: &str) -> String {
         let mut chars = s.chars();
@@ -229,25 +285,16 @@ impl FileEntry {
                             // Get the final u64 hash value
                             let hash_value = hasher.finish();
 
-                            let start = SystemTime::now();
-                            let since_the_epoch = start
-                                .duration_since(UNIX_EPOCH)
-                                .expect("Time went backwards");
-
                             m.counter = Some(io::prometheus::client::Counter {
-                                value: Some(gr.0.meta.value),
+                                value: gr.0.meta.value,
                                 created_timestamp: None,
-                                exemplar: Some(io::prometheus::client::Exemplar{
-                                    label: vec![
-                                        io::prometheus::client::LabelPair {
-                                            name: Some("traceID".to_string()),
-                                            value: Some("123456789".to_string()),
-                                        }
-                                    ],
-                                    value: Some(gr.0.meta.value),
-                                    timestamp: Some(prost_types::Timestamp { seconds:since_the_epoch.as_secs() as i64 , nanos: since_the_epoch.as_nanos() as i32 }),
-                                }),
+                                exemplar: None,
                             });
+
+                            if gr.0.meta.ex.is_some() {
+                                m.counter.as_mut().unwrap().exemplar =
+                                    Some(exemplar_to_proto(gr.0.meta.ex.as_ref().unwrap()));
+                            }
 
                             mtrcs.insert(hash_value, m);
                             metric_types.insert(hash_value, "counter");
@@ -266,7 +313,7 @@ impl FileEntry {
                             let hash_value = hasher.finish();
 
                             m.gauge = Some(io::prometheus::client::Gauge {
-                                value: Some(gr.0.meta.value),
+                                value: gr.0.meta.value,
                             });
                             mtrcs.insert(hash_value, m);
                             metric_types.insert(hash_value, "gauge");
@@ -312,7 +359,7 @@ impl FileEntry {
 
                                         let mut curf: f64 =
                                             bucket.cumulative_count_float.unwrap_or_default();
-                                        curf += gr.0.meta.value;
+                                        curf += gr.0.meta.value.unwrap();
 
                                         bucket.cumulative_count_float = Some(curf);
                                     }
@@ -335,7 +382,7 @@ impl FileEntry {
 
                                     let buckets = vec![io::prometheus::client::Bucket {
                                         cumulative_count: None,
-                                        cumulative_count_float: Some(gr.0.meta.value),
+                                        cumulative_count_float: gr.0.meta.value,
                                         upper_bound: Some(
                                             le.expect(
                                                 &format!("got no LE for {}", gr.1.metric_name)
@@ -413,10 +460,10 @@ impl FileEntry {
                                     if gr.1.metric_name.ends_with("_count") {
                                         let samplecount = smry.sample_count.unwrap_or_default();
                                         smry.sample_count =
-                                            Some((gr.0.meta.value as u64) + samplecount);
+                                            Some((gr.0.meta.value.unwrap() as u64) + samplecount);
                                     } else if gr.1.metric_name.ends_with("_sum") {
                                         let samplesum: f64 = smry.sample_sum.unwrap_or_default();
-                                        smry.sample_sum = Some(gr.0.meta.value + samplesum);
+                                        smry.sample_sum = Some(gr.0.meta.value.unwrap() + samplesum);
                                     } else {
                                         let mut found_quantile = false;
                                         for qntl in &mut smry.quantile {
@@ -425,7 +472,7 @@ impl FileEntry {
                                             }
 
                                             let mut curq: f64 = qntl.quantile.unwrap_or_default();
-                                            curq += gr.0.meta.value;
+                                            curq += gr.0.meta.value.unwrap();
 
                                             qntl.quantile = Some(curq);
                                             found_quantile = true;
@@ -434,7 +481,7 @@ impl FileEntry {
                                         if !found_quantile {
                                             smry.quantile.push(io::prometheus::client::Quantile {
                                                 quantile: quantile,
-                                                value: Some(gr.0.meta.value),
+                                                value: gr.0.meta.value,
                                             });
                                         }
                                     }
@@ -455,7 +502,7 @@ impl FileEntry {
                                             gr.1.metric_name.strip_suffix("_count").unwrap();
                                         m.summary = Some(io::prometheus::client::Summary {
                                             quantile: vec![],
-                                            sample_count: Some(gr.0.meta.value as u64),
+                                            sample_count: Some(gr.0.meta.value.unwrap() as u64),
                                             sample_sum: None,
                                             created_timestamp: None,
                                         });
@@ -464,14 +511,14 @@ impl FileEntry {
                                             gr.1.metric_name.strip_suffix("_sum").unwrap();
                                         m.summary = Some(io::prometheus::client::Summary {
                                             quantile: vec![],
-                                            sample_sum: Some(gr.0.meta.value),
+                                            sample_sum: Some(gr.0.meta.value.unwrap()),
                                             sample_count: None,
                                             created_timestamp: None,
                                         });
                                     } else {
                                         let quantiles = vec![io::prometheus::client::Quantile {
                                             quantile: quantile,
-                                            value: Some(gr.0.meta.value),
+                                            value: gr.0.meta.value,
                                         }];
                                         m.summary = Some(io::prometheus::client::Summary {
                                             quantile: quantiles,
@@ -486,6 +533,9 @@ impl FileEntry {
                                     metric_names.insert(hash_value, final_metric_name);
                                 }
                             }
+                        }
+                        "exemplar" => {
+                            // Exemplars are handled later on.
                         }
                         mtype => {
                             panic!("unhandled metric type {}", mtype)
@@ -532,6 +582,8 @@ impl FileEntry {
         unsafe { Ok(str::from_utf8_unchecked(buffer.get_ref()).to_string()) }
     }
 
+    
+
     /// Convert the sorted entries into a String in Prometheus metrics format.
     pub fn entries_to_string(entries: Vec<FileEntry>) -> Result<String> {
         // We guesstimate that lines are ~100 bytes long, preallocate the string to
@@ -568,7 +620,7 @@ impl FileEntry {
 
             entry.append_entry(metrics_data, &mut out)?;
 
-            writeln!(&mut out, " {}", entry.meta.value)
+            writeln!(&mut out, " {}", entry.meta.value.unwrap())
                 .map_err(|e| MmapError::Other(format!("Failed to append to output: {e}")))?;
 
             processed_count += 1;
@@ -1182,7 +1234,7 @@ mod test {
             entry_a.meta.merge(&entry_b.meta);
 
             assert_eq!(
-                case.expected_value, entry_a.meta.value,
+                case.expected_value, entry_a.meta.value.unwrap(),
                 "test case: {name} - value"
             );
         }

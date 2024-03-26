@@ -31,11 +31,7 @@ module Prometheus
           initialize_file if pid_changed?
 
           @value += amount
-          # TODO(GiedriusS): write exemplars too.
-          if @file_prefix != 'gauge'
-            puts "#{@name} exemplar name = #{exemplar_name}, exemplar_value = #{exemplar_value}"
-          end
-          write_value(@key, @value)
+          write_value(@key, @value, exemplar_name, exemplar_value)
           @value
         end
       end
@@ -120,12 +116,18 @@ module Prometheus
           unless @file.nil?
             @file.close
           end
+          unless @exemplar_file.nil?
+            @exemplar_file.close
+          end
           mmaped_file = Helper::MmapedFile.open_exclusive_file(@file_prefix)
+          exemplar_file = Helper::MmapedFile.open_exclusive_file('exemplar')
 
           @@files[@file_prefix] = MmapedDict.new(mmaped_file)
+          @@files['exemplar'] = MmapedDict.new(exemplar_file)
         end
 
         @file = @@files[@file_prefix]
+        @exemplar_file = @@files['exemplar']
         @key = rebuild_key
 
         @value = read_value(@key)
@@ -139,8 +141,12 @@ module Prometheus
         [@metric_name, @name, keys, values].to_json
       end
 
-      def write_value(key, val)
+      def write_value(key, val, exemplar_name = '', exemplar_value = '')
         @file.write_value(key, val)
+        # Exemplars are only defined on counters or histograms.
+        if @file_prefix == 'counter' or @file_prefix == 'histogram' and exemplar_name != '' and exemplar_value != ''
+          @exemplar_file.write_exemplar(key, val, exemplar_name, exemplar_value)
+        end
       rescue StandardError => e
         Prometheus::Client.logger.warn("writing value to #{@file.path} failed with #{e}")
         Prometheus::Client.logger.debug(e.backtrace.join("\n"))
