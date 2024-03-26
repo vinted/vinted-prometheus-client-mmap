@@ -14,6 +14,5 @@
 
 # Ignore IDE specific files
 .idea/
-/target
 lib/fast_mmaped_file_rs.so
-Gemfile.lock
+/target
