@@ -116,6 +116,8 @@ impl EntryMetadata {
         if file.type_.to_string() == "exemplar" {
             let ex = mmap_entry.exemplar();
 
+            
+
             return Ok(EntryMetadata {
                 multiprocess_mode: file.multiprocess_mode,
                 type_: file.type_,
@@ -188,6 +190,24 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use std::io::Write as OtherWrite;
+
+fn exemplar_to_proto(e: &Exemplar) -> io::prometheus::client::Exemplar {
+    let seconds = e.timestamp / (1000 * 1000 * 1000);
+    let nanos = e.timestamp % (1000 * 1000 * 1000);
+
+    io::prometheus::client::Exemplar {
+        label: vec![io::prometheus::client::LabelPair {
+            name: Some(e.label_name.clone()),
+            value: Some(e.label_value.clone()),
+        }],
+        value: Some(e.value),
+        timestamp: Some(prost_types::Timestamp {
+            seconds: seconds as i64,
+            nanos: nanos as i32,
+        }),
+    }
+}
+
 impl FileEntry {
     pub fn trim_quotes(s: &str) -> String {
         let mut chars = s.chars();
@@ -270,6 +290,11 @@ impl FileEntry {
                                 created_timestamp: None,
                                 exemplar: None,
                             });
+
+                            if gr.0.meta.ex.is_some() {
+                                m.counter.as_mut().unwrap().exemplar =
+                                    Some(exemplar_to_proto(gr.0.meta.ex.as_ref().unwrap()));
+                            }
 
                             mtrcs.insert(hash_value, m);
                             metric_types.insert(hash_value, "counter");
@@ -633,6 +658,8 @@ impl FileEntry {
         // up as a string in Ruby.
         unsafe { Ok(str::from_utf8_unchecked(buffer.get_ref()).to_string()) }
     }
+
+    
 
     /// Convert the sorted entries into a String in Prometheus metrics format.
     pub fn entries_to_string(entries: Vec<FileEntry>) -> Result<String> {
