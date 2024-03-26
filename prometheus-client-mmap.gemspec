@@ -8,7 +8,7 @@ Gem::Specification.new do |s|
   s.summary           = 'A suite of instrumentation metric primitives ' \
                         'that can be exposed through a web services interface.'
   s.authors           = ['Tobias Schmidt', 'Paweł Chojnacki', 'Stan Hu', 'Will Chandler']
-  s.email             = ['ts@soundcloud.com', 'pawel@gitlab.com', 'stanhu@gmail.com', 'wchandler@gitlab.com']
+  s.email             = ['backend@vinted.com']
   s.homepage          = 'https://gitlab.com/gitlab-org/prometheus-client-mmap'
   s.license           = 'Apache-2.0'
 
