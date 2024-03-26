@@ -12,6 +12,8 @@ Gem::Specification.new do |s|
   s.homepage          = 'https://gitlab.com/gitlab-org/prometheus-client-mmap'
   s.license           = 'Apache-2.0'
 
+  s.metadata["allowed_push_host"] = "https://rubygems.org"
+
   s.files             = `git ls-files README.md .tool-versions lib ext vendor`.split("\n")
   s.require_paths     = ['lib']
   s.extensions        = Dir.glob('{ext/**/extconf.rb}')
