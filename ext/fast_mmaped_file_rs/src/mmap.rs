@@ -338,7 +338,7 @@ impl MmapedFile {
         let since_the_epoch = start
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards");
-        
+
         let ex: Exemplar = Exemplar {
             label_name: unsafe { exemplar_name.as_str().unwrap().into() },
             label_value: unsafe { exemplar_value.as_str().unwrap().into() },

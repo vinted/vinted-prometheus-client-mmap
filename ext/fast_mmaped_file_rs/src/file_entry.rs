@@ -1,5 +1,5 @@
 use core::panic;
-use magnus::{eval, Symbol, Value};
+use magnus::Symbol;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use smallvec::SmallVec;
@@ -362,6 +362,11 @@ impl FileEntry {
                                         curf += gr.0.meta.value.unwrap();
 
                                         bucket.cumulative_count_float = Some(curf);
+
+                                        if gr.0.meta.ex.is_some() {
+                                            bucket.exemplar =
+                                                Some(exemplar_to_proto(gr.0.meta.ex.as_ref().unwrap()));
+                                        }
                                     }
                                 }
                                 None => {
@@ -380,7 +385,7 @@ impl FileEntry {
                                         final_metric_name = stripped;
                                     }
 
-                                    let buckets = vec![io::prometheus::client::Bucket {
+                                    let mut buckets = vec![io::prometheus::client::Bucket {
                                         cumulative_count: None,
                                         cumulative_count_float: gr.0.meta.value,
                                         upper_bound: Some(
@@ -391,6 +396,11 @@ impl FileEntry {
                                         ),
                                         exemplar: None,
                                     }];
+
+                                    if gr.0.meta.ex.is_some() {
+                                        buckets[0].exemplar =
+                                            Some(exemplar_to_proto(gr.0.meta.ex.as_ref().unwrap()));
+                                    }
                                     m.label = m
                                         .label
                                         .into_iter()

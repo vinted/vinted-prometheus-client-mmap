@@ -29,7 +29,8 @@ module Prometheus
           end
 
           def marshal_multiprocess(path = Prometheus::Client.configuration.multiprocess_files_dir, use_rust: true)
-            file_list = Dir.glob(File.join(path, '*.db')).sort
+            # NOTE(GiedriusS): need to ensure exemplar files go at the end because they add extra data.
+            file_list = Dir.glob(File.join(path, '*.db')).sort_by { |f| [f.include?('exemplar') ? 1 : 0, f] }
               .map {|f| Helper::PlainFile.new(f) }
               .map {|f| [f.filepath, f.multiprocess_mode.to_sym, f.type.to_sym, f.pid] }
 

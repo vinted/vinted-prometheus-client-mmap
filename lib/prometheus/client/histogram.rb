@@ -60,9 +60,9 @@ module Prometheus
         :histogram
       end
 
-      def observe(labels, value)
+      def observe(labels, value, exemplar_name = '', exemplar_value = '')
         label_set = label_set_for(labels)
-        synchronize { @values[label_set].observe(value) }
+        synchronize { @values[label_set].observe(value, exemplar_name, exemplar_value) }
       end
 
       private
