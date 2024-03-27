@@ -72,6 +72,12 @@ namespace "gem" do
       ENV["RCD_IMAGE"] = "rbsys/#{plat}:#{RbSys::VERSION}"
 
       RakeCompilerDock.sh <<~SH, platform: plat
+        (mkdir "$HOME/.protoc") ||: &&
+        curl -L https://github.com/protocolbuffers/protobuf/releases/download/v24.4/protoc-24.4-linux-x86_64.zip -o "$HOME/.protoc/protoc-24.4-linux-x86_64.zip" &&
+        cur="$(pwd)" &&
+        cd "$HOME/.protoc"; unzip -o protoc-24.4-linux-x86_64.zip &&
+        cd "$cur" &&
+        export PATH="${PATH}:$HOME/.protoc/bin" &&
         bundle && \
         RUBY_CC_VERSION="#{cross_rubies.join(":")}" \
         rake native:#{plat} pkg/#{gemspec.full_name}-#{plat}.gem

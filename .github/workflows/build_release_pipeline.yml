@@ -26,7 +26,7 @@ jobs:
       - name: Build gem
         if: success() && github.ref == 'refs/heads/master'
         run: |
-          gem build prometheus-client-mmap.gemspec
+          bundle exec rake gem:x86_64-linux
           echo "::set-output name=gem_version::v$(bundle exec rake version)"
       - name: Release to rubygems
         if: success() && github.ref == 'refs/heads/master'
@@ -35,7 +35,7 @@ jobs:
           touch $HOME/.gem/credentials
           chmod 600 $HOME/.gem/credentials
           printf -- "---\n:rubygems_api_key: ${GEM_HOST_API_KEY}\n" > $HOME/.gem/credentials
-          gem push vinted-prometheus-client-mmap-*.gem -V
+          gem push pkg/vinted-prometheus-client-mmap-*.gem -V
         env:
           GEM_HOST_API_KEY: "${{ secrets.RUBYGEMS_AUTH_TOKEN }}"
       - name: Tag repo with new gem version
