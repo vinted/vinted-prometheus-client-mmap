@@ -19,3 +19,8 @@ group :test do
   gem 'rubocop', ruby_version?('< 2.0') ? '< 0.42' : nil
   gem 'tins', '< 1.7' if ruby_version?('< 2.0')
 end
+
+group :benchmark do
+  gem 'benchmark-ips'
+  gem 'benchmark-memory'
+end
