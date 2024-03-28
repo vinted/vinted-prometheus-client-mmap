@@ -144,7 +144,7 @@ impl EntryMetadata {
             if self.ex.is_some() {
                 let selfex = self.ex.clone().unwrap();
 
-                if selfex.timestamp < otherex.timestamp {
+                if selfex.timestamp < otherex.timestamp || (selfex.timestamp == otherex.timestamp && selfex.value < otherex.value) {
                     self.ex = other.ex.clone();
                 }
             } else {
