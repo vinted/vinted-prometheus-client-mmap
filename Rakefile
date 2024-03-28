@@ -19,6 +19,8 @@ CLEAN.include FileList['**/*{.o,.so,.dylib,.bundle}'],
               FileList['**/Makefile'],
               FileList['pkg/']
 
+Rake.add_rakelib 'tasks'
+
 desc 'Default: run specs'
 task default: [:spec]
 
